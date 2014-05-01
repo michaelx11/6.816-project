@@ -1,0 +1,13 @@
+Serial: Config: 0
+Throughput: 225
+Serial: Config: 1
+Throughput: 389
+Serial: Config: 2
+Throughput: 588
+Serial: Config: 3
+Throughput: 13333333333333337
+Serial: Config: 4
+Throughput: 13333333333333337
+Serial: Config: 5
+Throughput: 13333333333333337
+Serial: Config: 6
