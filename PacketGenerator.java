@@ -62,8 +62,7 @@ class PacketGenerator {
   public Packet getPacket() {
     if( timeToNextConfigPacket == 0 ) {
       numConfigPackets++;
-      if( numConfigPackets > addressesMask )
-        timeToNextConfigPacket = expGen.getRand();
+      timeToNextConfigPacket = expGen.getRand();
       return getConfigPacket();
     }
     else

@@ -57,6 +57,7 @@ class SerialFirewall {
     System.out.println("count: " + totalCount);
     System.out.println("time: " + timer.getElapsedTime());
     System.out.println(totalCount/timer.getElapsedTime() + " pkts / ms");
+    System.out.println("average interval: " + ((double)workerData.totalInterval/workerData.totalConfig));
   }
 }
 
@@ -176,6 +177,144 @@ class STMFirewall {
 
  
   }
+}
+
+class ParallelFirewallTest {
+  public static void main(String ... args) throws IOException {
+    final int numMilliseconds = Integer.parseInt(args[0]);
+    final int numWorkers = Integer.parseInt(args[1]);
+    final int numAddressesLog = Integer.parseInt(args[2]);
+    final int numTrainsLog = Integer.parseInt(args[3]);
+    final double meanTrainSize = Double.parseDouble(args[4]);
+    final double meanTrainsPerComm = Double.parseDouble(args[5]);
+    final int meanWindow = Integer.parseInt(args[6]);
+    final int meanCommsPerAddress = Integer.parseInt(args[7]);
+    final int meanWork = Integer.parseInt(args[8]);
+    final double configFraction = Double.parseDouble(args[9]);
+    final double pngFraction = Double.parseDouble(args[10]);
+    final double acceptingFraction = Double.parseDouble(args[11]);
+
+    @SuppressWarnings({"unchecked"})
+    StopWatch timer = new StopWatch();
+    PacketGenerator source = new PacketGenerator(numAddressesLog,
+        numTrainsLog, meanTrainSize, meanTrainsPerComm, meanWindow,
+        meanCommsPerAddress, meanWork, configFraction, pngFraction, acceptingFraction);
+
+    // 
+    // Dispatcher
+    PaddedPrimitiveNonVolatile<Boolean> dispatcherDone = new PaddedPrimitiveNonVolatile<Boolean>(false);
+    PaddedPrimitive<Boolean> dMemFence = new PaddedPrimitive<Boolean>(false);
+
+    // Workers
+    PaddedPrimitiveNonVolatile<Boolean> workerDone = new PaddedPrimitiveNonVolatile<Boolean>(false);
+    PaddedPrimitive<Boolean> wMemFence = new PaddedPrimitive<Boolean>(false);
+
+    // allocate and initialize locks and any signals used to marshal threads (eg. done signals)
+    ReentrantLock[] locks = new ReentrantLock[numWorkers];;
+    for (int i = 0; i < numWorkers; i++) {
+      locks[i] = new ReentrantLock();
+//      locks[i].lock();
+    }
+
+    //
+    // allocate and initialize Lamport queues and hash table
+    //
+    LamportQueue<Packet>[] queues = new LamportQueue[numWorkers];
+
+    for (int i = 0; i < numWorkers; i++) {
+      queues[i] = new LamportQueue<Packet>(8);
+    }
+
+    CompressedFirewallStruct state = new CompressedFirewallStruct(numAddressesLog);
+    System.out.println(state.isCompressed);
+    SerialFastFirewallWorker initializer = new SerialFastFirewallWorker(dispatcherDone, queues, locks, 1, -1, state);
+    int limit = (int)Math.pow(1 << numAddressesLog, 3.0/2.0);
+    System.out.println(limit);
+    for (int i = 0; i < limit; i++) {
+      if (i % 1000000 == 0) {
+        System.out.println(i);
+      }
+      initializer.processConfigPacket(source.getConfigPacket());
+    }
+
+    // 
+    // initialize your hash table w/ initSize number of add() calls using
+    // source.getAddPacket();
+    //
+
+
+    // allocate and inialize Dispatcher and Worker threads
+    //
+    FastFirewallWorker[] workers = new FastFirewallWorker[numWorkers];
+    Thread[] workerThreads = new Thread[numWorkers];
+
+    Dispatcher dispatchData = new Dispatcher(dispatcherDone, source, numWorkers, queues);
+    Thread dispatcherThread = new Thread(dispatchData);
+
+    // call .start() on your Workers
+    //
+    for (int i = 0; i < numWorkers; i++) {
+      workers[i] = new FastFirewallWorker(workerDone, queues, locks, numWorkers, i, state);
+      workerThreads[i] = new Thread(workers[i]);
+
+      workerThreads[i].start();
+    }
+
+//    for (int i = 0; i < numWorkers; i++) {
+//      locks[i].unlock();
+//    }
+
+    timer.startTimer();
+    //
+    // call .start() on your Dispatcher
+    //
+    dispatcherThread.start();
+
+    try {
+      Thread.sleep(numMilliseconds);
+    } catch (InterruptedException ignore) {;}
+    //
+    // assert signals to stop Dispatcher
+    dispatcherDone.value = true;
+    dMemFence.value = true;
+    //
+    // call .join() on Dispatcher
+    try {
+      dispatcherThread.join();
+    } catch (InterruptedException ignore) {;}
+    //
+    // assert signals to stop Workers - they are responsible for leaving
+    // the queues empty
+    workerDone.value = true;
+    wMemFence.value = true;
+    for (int i = 0; i < numWorkers; i++) {
+      try {
+        workerThreads[i].join();
+      } catch (InterruptedException ignore) {;}
+    }
+    // call .join() for each Worker
+    //
+    timer.stopTimer();
+    // report the total number of packets processed and total time
+    final long totalCount = dispatchData.totalPackets;
+    long totalDataPackets = 0;
+    long totalPacketsWorker = 0;
+    long totalConfigPackets = 0;
+    for (int i = 0; i < numWorkers;i ++) {
+      totalDataPackets += workers[i].numDataPackets;
+      totalPacketsWorker += workers[i].totalPackets;
+      totalConfigPackets += workers[i].numConfigPackets;
+    }
+    System.out.println("count: " + totalCount);
+    System.out.println("time: " + timer.getElapsedTime());
+    System.out.println(totalCount/timer.getElapsedTime() + " pkts / ms");
+    System.out.println("num data packets: " + totalDataPackets);
+    System.out.println("num worker packets: " + totalPacketsWorker);
+    System.out.println("num config packets: " + totalConfigPackets);
+
+ 
+  }
+
 }
 
 class STMFirewallNL {
