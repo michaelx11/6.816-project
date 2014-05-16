@@ -1,5 +1,6 @@
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.io.*;
 import org.deuce.Atomic;
 import java.util.concurrent.locks.ReentrantLock;
@@ -26,12 +27,12 @@ class CompressedFirewallStruct {
   public boolean isCompressed;
   public BitSet[] R;
   public BitSet[] valid;
-  public BitSet png;
+  public long[] png;
 
-  public long[] longLMasks = new long[65];
-  public long[] longRMasks = new long[65];
-  public int[] intLMasks =new int[33];
-  public int[] intRMasks =new int[33];
+  public final long[] longLMasks = new long[65];
+  public final long[] longRMasks = new long[65];
+  public final int[] intLMasks = new int[33];
+  public final int[] intRMasks = new int[33];
 
 //  public ConcurrentHashMap<Integer, Integer> overflow;
 
@@ -42,14 +43,15 @@ class CompressedFirewallStruct {
   public final int lockMask;
 
 //  public AtomicInteger[]
-  public long[] histogram;
+  public AtomicInteger[] histogram;
 
   public CompressedFirewallStruct(int logNumAddresses) {
     // Choose between bit-wise or compressed representation
     if (logNumAddresses < 16) {
       isCompressed = false;
-      png = new BitSet(1 << logNumAddresses);
-      png.set(0, 1 << logNumAddresses);
+      png = new long[1 << logNumAddresses];
+//      png = new BitSet(1 << logNumAddresses);
+//      png.set(0, 1 << logNumAddresses);
       R = new BitSet[1 << logNumAddresses];
       for (int u = 0; u < R.length; u++) {
         R[u] = new BitSet(1 << logNumAddresses);
@@ -57,8 +59,9 @@ class CompressedFirewallStruct {
       }
     } else {
       isCompressed = true;
-      png = new BitSet(1 << logNumAddresses);
-      png.set(0, 1 << logNumAddresses);
+      png = new long[1 << logNumAddresses];
+//      png = new BitSet(1 << logNumAddresses);
+//      png.set(0, 1 << logNumAddresses);
       R = new BitSet[1 << logNumAddresses];
       valid = new BitSet[1 << logNumAddresses]; 
       for (int u = 0; u < R.length; u++) {
@@ -84,7 +87,9 @@ class CompressedFirewallStruct {
     lockMask = (1 << logNumLocks) - 1;
 
     // histogram
-    histogram = new long[1 << 16];
+    histogram = new AtomicInteger[1 << 16];
+    for (int i = 0; i < (1<<16); i++)
+      histogram[i] = new AtomicInteger();
 
     longLMasks[0] = 0L;
     longRMasks[64] = 0L;
@@ -116,11 +121,14 @@ class FastFirewallWorker implements FirewallWorker {
   final int queueNum;
   final int numWorkers;
   ReentrantLock[] queueLocks;
-  public long[] histogram;
+  public AtomicInteger[] histogram;
+//  public long[] histogram;
 
   // [whole, blacklisted] * 32 packed into single 64 bit long
   public BitSet[] R;
-  public BitSet png;
+  public BitSet[] valid;
+//  public BitSet png;
+  public long[] png;
 
   // contains non-whole configurations
 //  public ConcurrentHashMap<Integer, Integer>[] overflow;
@@ -151,6 +159,7 @@ class FastFirewallWorker implements FirewallWorker {
 
     this.R = state.R;
     this.png = state.png;
+    this.valid = state.valid;
     this.histogram = state.histogram;
     this.overflow = state.overflow;
     this.locks = state.locks;
@@ -202,11 +211,14 @@ class FastFirewallWorker implements FirewallWorker {
 
   // Called under lock
   public void updatePNG(int addr, boolean status) {
+    png[addr] = (status ? 1 : 0);
+    /*
     if (status) {
       png.set(addr);
     } else {
       png.clear(addr);
     }
+    */
   }
 
   public void setR(int addr, int bAddr, int eAddr) {
@@ -214,55 +226,47 @@ class FastFirewallWorker implements FirewallWorker {
       final int beginBucket = bAddr >> 5;
       final int endBucket = eAddr >> 5;
       
-      /*
       // Handle beginning bucket
-      final int bKey = (addr << 16) | beginBucket;
-      int beginValue = (R[addr].get(2 * beginBucket) ? intRMasks[0] : 0);
-      if (!R[addr].get(2 * beginBucket + 1)) {
+      int beginValue = 0;
+      if (!valid[addr].get(beginBucket)) {
         beginValue = overflow[addr].get(beginBucket);
-//        beginValue = overflow.get(bKey);
-      }
-      beginValue |=  intRMasks[bAddr & (31)];
-      // Completely filled
-      if (beginValue == intRMasks[0]) {
-        R[addr].set(2 * beginBucket);
-        R[addr].set(2 * beginBucket + 1);
-//        overflow.remove(bKey);
       } else {
-//        System.out.println("PUT KEY");
+        beginValue = (R[addr].get(beginBucket) ? ~0 : 0);
+      }
+//      beginValue |=  intRMasks[bAddr & (31)];
+      beginValue |=  (1 << (32 - (bAddr & (31)))) - 1;
+      // Completely filled
+      if (beginValue != ~0) {
         overflow[addr].put(beginBucket, beginValue);
-//        overflow.put(bKey, beginValue);
-        R[addr].clear(2 * beginBucket + 1);
+        valid[addr].clear(beginBucket);
+      } else {
+        R[addr].set(beginBucket);
+        valid[addr].set(beginBucket);
       }
 
       // Handle ending bucket
-      final int eKey = (addr << 16) | endBucket;
-      int endValue = (R[addr].get(2 * endBucket) ? intRMasks[0] : 0);
-      if (!R[addr].get(2 * endBucket + 1)) {
+//      final int eKey = (addr << 16) | endBucket;
+//      int endValue = (R[addr].get(2 * endBucket) ? intRMasks[0] : 0);
+      int endValue = 0;
+      if (!valid[addr].get(endBucket)) {
         endValue = overflow[addr].get(endBucket);
 //        endValue = overflow.get(eKey);
-      }
-      endValue |=  intLMasks[eAddr & (31) + 1];
-      // Completely filled
-      if (endValue == intRMasks[0]) {
-        R[addr].set(2 * endBucket);
-        R[addr].set(2 * endBucket + 1);
-//        overflow.remove(eKey);
       } else {
-//        System.out.println("PUT KEY");
-        overflow[addr].put(endBucket, endValue);
-//        overflow.put(eKey, endValue);
-        R[addr].clear(2 * endBucket + 1);
+        endValue = (R[addr].get(endBucket) ? ~0 : 0);
       }
-      
-      */
-      
-      for (int i = beginBucket + 1; i < endBucket; i++) {
-        R[addr].set(2 * i);
-//        if (!R[addr].get(2 * i + 1)) {
-//          overflow.remove((addr << 16) | i);
-//        }
-        R[addr].set(2 * i + 1);
+      endValue |=  ~((1 << (31 - (eAddr & 31))) - 1);
+      // Completely filled
+      if (endValue != ~0) {
+        overflow[addr].put(endBucket, endValue);
+        valid[addr].clear(endBucket);
+      } else {
+        R[addr].set(endBucket);
+        valid[addr].set(endBucket);
+      }
+
+      if (endBucket - beginBucket > 1) {
+        R[addr].set(beginBucket + 1, endBucket);
+        valid[addr].set(beginBucket + 1, endBucket);
       }
     } else {
       R[addr].set(bAddr, eAddr);
@@ -274,57 +278,47 @@ class FastFirewallWorker implements FirewallWorker {
       final int beginBucket = bAddr >> 5;
       final int endBucket = eAddr >> 5;
       
-      /*
       // Handle beginning bucket
-      final int bKey = (addr << 16) | beginBucket;
-      int beginValue = (R[addr].get(2 * beginBucket) ? intRMasks[0] : 0);
-      if (!R[addr].get(2 * beginBucket + 1)) {
+      int beginValue = 0;
+      if (!valid[addr].get(beginBucket)) {
         beginValue = overflow[addr].get(beginBucket);
-//        beginValue = overflow.get(bKey);
-      }
-      beginValue =  (beginValue & ~intRMasks[bAddr & (31)]);
-      // Completely cleared
-      if (beginValue == 0) {
-        R[addr].clear(2 * beginBucket);
-        R[addr].set(2 * beginBucket + 1);
-//        overflow.remove(bKey);
       } else {
-//        System.out.println("PUT KEY");
+        beginValue = (R[addr].get(beginBucket) ? ~0 : 0);
+      }
+//      beginValue |=  intRMasks[bAddr & (31)];
+      beginValue = (beginValue & ((1 << (32 - (bAddr & (31)))) - 1));
+      // Completely filled
+      if (beginValue != 0) {
         overflow[addr].put(beginBucket, beginValue);
-//        overflow.put(bKey, beginValue);
-        R[addr].clear(2 * beginBucket + 1);
+        valid[addr].clear(beginBucket);
+      } else {
+        R[addr].clear(beginBucket);
+        valid[addr].set(beginBucket);
       }
 
       // Handle ending bucket
-      final int eKey = (addr << 16) | endBucket;
-      int endValue = (R[addr].get(endBucket) ? intRMasks[0] : 0);
-      if (!R[addr].get(2 * endBucket + 1)) {
+//      final int eKey = (addr << 16) | endBucket;
+//      int endValue = (R[addr].get(2 * endBucket) ? intRMasks[0] : 0);
+      int endValue = 0;
+      if (!valid[addr].get(endBucket)) {
         endValue = overflow[addr].get(endBucket);
 //        endValue = overflow.get(eKey);
-      }
-      endValue =  (endValue & ~intLMasks[eAddr & (31) + 1]);
-      // Completely cleared
-      if (endValue == 0) {
-        R[addr].clear(2 * endBucket);
-        R[addr].set(2 * endBucket + 1);
-//        overflow.remove(eKey);
       } else {
-//        System.out.println("PUT KEY");
+        endValue = (R[addr].get(endBucket) ? ~0 : 0);
+      }
+      endValue = (endValue & ( ~((1 << (31 - (eAddr & 31))) - 1)));
+      // Completely filled
+      if (endValue != 0) {
         overflow[addr].put(endBucket, endValue);
-//        overflow.put(eKey, endValue);
-        R[addr].clear(2 * endBucket + 1);
+        valid[addr].clear(endBucket);
+      } else {
+        R[addr].clear(endBucket);
+        valid[addr].set(endBucket);
       }
 
-//      R[addr].clear(2 * beginBucket);
-//      R[addr].set(2 * beginBucket + 1);
-      
-      */
-      for (int i = beginBucket + 1; i < endBucket; i++) {
-        R[addr].clear(2 * i);
-//        if (!R[addr].get(2 * i + 1)) {
-//          overflow.remove((addr << 16) | i);
-//        }
-        R[addr].set(2 * i + 1);
+      if (endBucket - beginBucket > 1) {
+        R[addr].clear(beginBucket + 1, endBucket);
+        valid[addr].set(beginBucket + 1, endBucket);
       }
     } else {
       R[addr].clear(bAddr, eAddr);
@@ -332,10 +326,8 @@ class FastFirewallWorker implements FirewallWorker {
   }
 
   public boolean checkPNG(int source) {
-//    return (Math.random() < .25);
-//      return false;
-//    return true;
-    return png.get(source);
+    return png[source] == 1;
+//    return png.get(source);
   }
 
   public boolean checkR(int source, int dest) {
@@ -343,12 +335,12 @@ class FastFirewallWorker implements FirewallWorker {
     if (isCompressed) {
       final int bucket = source >> 5;
       // Is valid?
-      if (R[dest].get(2 * bucket + 1)) {
+      if (valid[dest].get(bucket)) {
 //        return true;
 //        return false;
-        return (R[dest].get(2 * bucket) ? true : false);
+        return (R[dest].get(bucket) ? true : false);
       } else {
-        final int key = (dest << 16) | bucket;
+//        final int key = (dest << 16) | bucket;
 //        final int value = overflow.get(key);
         final int value = overflow[dest].get(bucket);
 //        return true;
@@ -356,7 +348,7 @@ class FastFirewallWorker implements FirewallWorker {
         return ((value & (1 << (source & (31)))) != 0 ? true : false);
       }
     } else {
-      System.out.println("WHAT IS THIS");
+//      System.out.println("WHAT IS THIS");
       return R[dest].get(source);
     }
   }
@@ -374,8 +366,8 @@ class FastFirewallWorker implements FirewallWorker {
 //    System.out.printf("addr: %d, interval: [%d - %d], png: %b, accepting: %b\n", address, beginAddr, endAddr, pngStatus, acceptingRange);
 
     final int lockIndex = address & lockMask;
-//    try {
-//      locks[lockIndex].lock();
+    try {
+      locks[lockIndex].lock();
       updatePNG(address, pngStatus);
 
       if (acceptingRange) {
@@ -383,9 +375,9 @@ class FastFirewallWorker implements FirewallWorker {
       } else {
         clearR(address, beginAddr, endAddr);
       }
-//    } finally {
-//      locks[lockIndex].unlock();
-//    }
+    } finally {
+      locks[lockIndex].unlock();
+    }
   }
 
 //  @Atomic
@@ -396,32 +388,18 @@ class FastFirewallWorker implements FirewallWorker {
   public void processDataPacket(Packet pkt) {
     Header hdr = pkt.header;
     final int lockIndex = pkt.header.dest & lockMask;
-//    try {
-//      locks[lockIndex].lock();
+    try {
+      locks[lockIndex].lock();
       long checksum = 0;
       if (checkPermissions(hdr.source, hdr.dest)) {
 //      if (!checkPNG(hdr.source) && checkR(hdr.source, hdr.dest)) {
         checksum = Fingerprint.getFingerprint(pkt.body.iterations, pkt.body.seed);
         numDataPackets++;
       }
-      incrementHistogram((int)checksum);
-      /*
-      final int histoLockIndex = (int)checksum & lockMask;
-      try {
-        histoLocks[histoLockIndex].lock();
-        histogram[(int)checksum]++;
-      } finally {
-        histoLocks[histoLockIndex].unlock();
-      }
-      */
-//    } finally {
-//      locks[lockIndex].unlock();
-//    }
-  }
-
-//  @Atomic
-  public void incrementHistogram(int index) {
-    histogram[index]++;
+      histogram[(int)checksum].getAndIncrement();
+    } finally {
+      locks[lockIndex].unlock();
+    }
   }
 
   public void handlePacket(Packet pkt) {
@@ -625,7 +603,8 @@ class SerialFastFirewallWorker extends FastFirewallWorker {
     if (!checkPNG(hdr.source) && checkR(hdr.source, hdr.dest)) {
       long checksum = Fingerprint.getFingerprint(pkt.body.iterations, pkt.body.seed);
       final int lockIndex = (int)checksum & lockMask;
-      histogram[(int)checksum]++;
+      histogram[(int)checksum].getAndIncrement();
+//      histogram[(int)checksum]++;
     }
   }
 }
