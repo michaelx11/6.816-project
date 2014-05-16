@@ -61,20 +61,91 @@ class SerialFirewall {
   }
 }
 
+class CompressedSerialFirewall {
+  public static void main(String ... args) throws IOException {
+    final int numMilliseconds = Integer.parseInt(args[0]);
+    final int numAddressesLog = Integer.parseInt(args[1]);
+    final int numTrainsLog = Integer.parseInt(args[2]);
+    final double meanTrainSize = Double.parseDouble(args[3]);
+    final double meanTrainsPerComm = Double.parseDouble(args[4]);
+    final int meanWindow = Integer.parseInt(args[5]);
+    final int meanCommsPerAddress = Integer.parseInt(args[6]);
+    final int meanWork = Integer.parseInt(args[7]);
+    final double configFraction = Double.parseDouble(args[8]);
+    final double pngFraction = Double.parseDouble(args[9]);
+    final double acceptingFraction = Double.parseDouble(args[10]);
+
+    @SuppressWarnings({"unchecked"})
+    StopWatch timer = new StopWatch();
+    PacketGenerator source = new PacketGenerator(numAddressesLog,
+        numTrainsLog, meanTrainSize, meanTrainsPerComm, meanWindow,
+        meanCommsPerAddress, meanWork, configFraction, pngFraction, acceptingFraction);
+
+    PaddedPrimitiveNonVolatile<Boolean> done = new PaddedPrimitiveNonVolatile<Boolean>(false);
+    PaddedPrimitive<Boolean> memFence = new PaddedPrimitive<Boolean>(false);
+
+    // PLACEHOLDERS
+    // allocate and initialize locks and any signals used to marshal threads (eg. done signals)
+    ReentrantLock[] locks = new ReentrantLock[1];;
+    for (int i = 0; i < 1; i++) {
+      locks[i] = new ReentrantLock();
+    }
+
+    //
+    // allocate and initialize Lamport queues and hash table
+    //
+    LamportQueue<Packet>[] queues = new LamportQueue[1];
+
+    for (int i = 0; i < 1; i++) {
+      queues[i] = new LamportQueue<Packet>(8);
+    }
+
+
+    CompressedFirewallStruct state = new CompressedFirewallStruct(numAddressesLog);
+    SerialFastFirewallWorker initializer = new SerialFastFirewallWorker(done, queues, locks, 1, -1, state);
+    int limit = (int)Math.pow(1 << numAddressesLog, 3.0/2.0);
+//    System.out.println("Limit: " + limit);
+    for (int i = 0; i < limit; i++) {
+
+      initializer.processConfigPacket(source.getConfigPacket());
+    }
+//    System.out.println("Finished initialization");
+
+    SerialFastFirewallWorker workerData = new SerialFastFirewallWorker(done, queues, locks, 1, -1, state);
+    workerData.setSource(source);
+    Thread workerThread = new Thread(workerData);
+
+    workerThread.start();
+    timer.startTimer();
+    try {
+      Thread.sleep(numMilliseconds);
+    } catch (InterruptedException ignore) {;}
+    done.value = true;
+    memFence.value = true;
+    try {
+      workerThread.join();
+    } catch (InterruptedException ignore) {;}      
+    timer.stopTimer();
+    final long totalCount = workerData.totalPackets;
+    System.out.println("count: " + totalCount);
+    System.out.println("time: " + timer.getElapsedTime());
+    System.out.println(totalCount/timer.getElapsedTime() + " pkts / ms");
+  }
+}
 class STMFirewall {
   public static void main(String ... args) throws IOException {
     final int numMilliseconds = Integer.parseInt(args[0]);
-    final int numWorkers = Integer.parseInt(args[1]);
-    final int numAddressesLog = Integer.parseInt(args[2]);
-    final int numTrainsLog = Integer.parseInt(args[3]);
-    final double meanTrainSize = Double.parseDouble(args[4]);
-    final double meanTrainsPerComm = Double.parseDouble(args[5]);
-    final int meanWindow = Integer.parseInt(args[6]);
-    final int meanCommsPerAddress = Integer.parseInt(args[7]);
-    final int meanWork = Integer.parseInt(args[8]);
-    final double configFraction = Double.parseDouble(args[9]);
-    final double pngFraction = Double.parseDouble(args[10]);
-    final double acceptingFraction = Double.parseDouble(args[11]);
+    final int numAddressesLog = Integer.parseInt(args[1]);
+    final int numTrainsLog = Integer.parseInt(args[2]);
+    final double meanTrainSize = Double.parseDouble(args[3]);
+    final double meanTrainsPerComm = Double.parseDouble(args[4]);
+    final int meanWindow = Integer.parseInt(args[5]);
+    final int meanCommsPerAddress = Integer.parseInt(args[6]);
+    final int meanWork = Integer.parseInt(args[7]);
+    final double configFraction = Double.parseDouble(args[8]);
+    final double pngFraction = Double.parseDouble(args[9]);
+    final double acceptingFraction = Double.parseDouble(args[10]);
+    final int numWorkers = Integer.parseInt(args[11]);
 
     @SuppressWarnings({"unchecked"})
     StopWatch timer = new StopWatch();
@@ -179,20 +250,20 @@ class STMFirewall {
   }
 }
 
-class ParallelFirewallTest {
+class ParallelFirewall {
   public static void main(String ... args) throws IOException {
     final int numMilliseconds = Integer.parseInt(args[0]);
-    final int numWorkers = Integer.parseInt(args[1]);
-    final int numAddressesLog = Integer.parseInt(args[2]);
-    final int numTrainsLog = Integer.parseInt(args[3]);
-    final double meanTrainSize = Double.parseDouble(args[4]);
-    final double meanTrainsPerComm = Double.parseDouble(args[5]);
-    final int meanWindow = Integer.parseInt(args[6]);
-    final int meanCommsPerAddress = Integer.parseInt(args[7]);
-    final int meanWork = Integer.parseInt(args[8]);
-    final double configFraction = Double.parseDouble(args[9]);
-    final double pngFraction = Double.parseDouble(args[10]);
-    final double acceptingFraction = Double.parseDouble(args[11]);
+    final int numAddressesLog = Integer.parseInt(args[1]);
+    final int numTrainsLog = Integer.parseInt(args[2]);
+    final double meanTrainSize = Double.parseDouble(args[3]);
+    final double meanTrainsPerComm = Double.parseDouble(args[4]);
+    final int meanWindow = Integer.parseInt(args[5]);
+    final int meanCommsPerAddress = Integer.parseInt(args[6]);
+    final int meanWork = Integer.parseInt(args[7]);
+    final double configFraction = Double.parseDouble(args[8]);
+    final double pngFraction = Double.parseDouble(args[9]);
+    final double acceptingFraction = Double.parseDouble(args[10]);
+    final int numWorkers = Integer.parseInt(args[11]);
 
     @SuppressWarnings({"unchecked"})
     StopWatch timer = new StopWatch();
@@ -226,14 +297,13 @@ class ParallelFirewallTest {
     }
 
     CompressedFirewallStruct state = new CompressedFirewallStruct(numAddressesLog);
-    System.out.println(state.isCompressed);
     SerialFastFirewallWorker initializer = new SerialFastFirewallWorker(dispatcherDone, queues, locks, 1, -1, state);
     int limit = (int)Math.pow(1 << numAddressesLog, 3.0/2.0);
-    System.out.println(limit);
+//    System.out.println(limit);
     for (int i = 0; i < limit; i++) {
-      if (i % 1000000 == 0) {
-        System.out.println(i);
-      }
+//      if (i % 1000000 == 0) {
+//        System.out.println(i);
+//      }
       initializer.processConfigPacket(source.getConfigPacket());
     }
 
@@ -297,6 +367,7 @@ class ParallelFirewallTest {
     timer.stopTimer();
     // report the total number of packets processed and total time
     final long totalCount = dispatchData.totalPackets;
+    /*
     long totalDataPackets = 0;
     long totalPacketsWorker = 0;
     long totalConfigPackets = 0;
@@ -305,12 +376,15 @@ class ParallelFirewallTest {
       totalPacketsWorker += workers[i].totalPackets;
       totalConfigPackets += workers[i].numConfigPackets;
     }
+    */
     System.out.println("count: " + totalCount);
     System.out.println("time: " + timer.getElapsedTime());
     System.out.println(totalCount/timer.getElapsedTime() + " pkts / ms");
+    /*
     System.out.println("num data packets: " + totalDataPackets);
     System.out.println("num worker packets: " + totalPacketsWorker);
     System.out.println("num config packets: " + totalConfigPackets);
+    */
 
  
   }

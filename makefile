@@ -1,6 +1,7 @@
 CP=/afs/csail.mit.edu/proj/courses/6.816/DeuceSTM/bin/classes:.
 JFLAGS= -cp $(CP)
-JC= $(JAVA_HOME)"/bin/javac" 
+#JC= $(JAVA_HOME)"/bin/javac" 
+JC="javac"
 .SUFFIXES: .java .class
 .java.class:
 	$(JC) $(JFLAGS) $*.java
