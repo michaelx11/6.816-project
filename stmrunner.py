@@ -28,10 +28,10 @@ if numThreads > 8:
   server = 'cqbigsub_40'
 
 
-parallel_command = 'java -javaagent:/afs/csail.mit.edu/proj/courses/6.816/DeuceSTM/bin/deuceAgent.jar ParallelFirewall 2000 %s %d' % (' '.join(str(i) for i in configs[configNum]), n)
+parallel_command = 'java -javaagent:/afs/csail.mit.edu/proj/courses/6.816/DeuceSTM/bin/deuceAgent.jar STMParallelFirewall 2000 %s %d' % (' '.join(str(i) for i in configs[configNum]), n)
 
 command = serial_command if numThreads == 0 else parallel_command
-label = 'serial'  if numThreads == 0 else 'parallel'
+label = 'serial'  if numThreads == 0 else 'parallelSTM'
 randomness = random.randint(10, 99)
 
 filename = 'results/%s_config-%d_n-%d_rand-%d.txt' % (label, configNum, numThreads, randomness)

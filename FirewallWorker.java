@@ -578,3 +578,190 @@ class SerialFastFirewallWorker extends FastFirewallWorker {
     }
   }
 }
+
+// FAST STM WORKER
+class STMFastFirewallWorker extends FastFirewallWorker {
+
+  public STMFastFirewallWorker(
+      PaddedPrimitiveNonVolatile<Boolean> done, 
+      LamportQueue<Packet>[] queues,
+      ReentrantLock[] queueLocks,
+      int numWorkers,
+      int queueNum,
+      CompressedFirewallStruct state) {
+    super(done, queues, queueLocks, numWorkers, queueNum, state);
+  }
+
+
+  @Atomic
+  public void processConfigPacket(Packet pkt) {
+    final int address = pkt.config.address;
+    final boolean pngStatus = pkt.config.personaNonGrata;
+    final int beginAddr = pkt.config.addressBegin;
+    final int endAddr = pkt.config.addressEnd;
+    final boolean acceptingRange = pkt.config.acceptingRange;
+
+    updatePNG(address, pngStatus);
+
+    if (acceptingRange) {
+      setR(address, beginAddr, endAddr);
+    } else {
+      clearR(address, beginAddr, endAddr);
+    }
+  }
+
+  @Atomic
+  public void processDataPacket(Packet pkt) {
+    Header hdr = pkt.header;
+    if (!checkPNG(hdr.source) && checkR(hdr.source, hdr.dest)) {
+      long checksum = Fingerprint.getFingerprint(pkt.body.iterations, pkt.body.seed);
+      final int lockIndex = (int)checksum & lockMask;
+      histogram[(int)checksum].getAndIncrement();
+    }
+  }
+
+}
+
+// FAST PIPELINE WORKER
+class PipelineFastFirewallWorker extends FastFirewallWorker {
+  LamportQueue<Packet>[] packetQueues;
+
+  public PipelineFastFirewallWorker(
+      PaddedPrimitiveNonVolatile<Boolean> done, 
+      LamportQueue<Packet>[] queues,
+      ReentrantLock[] queueLocks,
+      int numWorkers,
+      int queueNum,
+      LamportQueue<Packet>[] packetQueues,
+      CompressedFirewallStruct state) {
+    super(done, queues, queueLocks, numWorkers, queueNum, state);
+    this.packetQueues = packetQueues;
+  }
+
+  public void run() {
+    Packet pkt;
+    boolean foundQueue = false;
+    int randomNum = (int)(Math.random() * numWorkers);
+    while(!done.value) {
+      if (!foundQueue) {
+      randomNum = (int)(Math.random() * numWorkers);
+      foundQueue = true;
+      } else {
+        try {
+          locks[randomNum].lock();
+          pkt = queues[randomNum].deq();
+          totalPackets++;
+          if (firewallPacket(pkt)) {
+            while(true) {
+              try {
+                packetQueues[randomNum].enq(pkt);
+                break;
+              } catch(FullException e) {
+              }
+            }
+          }
+        } catch (EmptyException e) {
+          foundQueue = false;
+        } finally {
+          locks[randomNum].unlock();
+        }
+      }
+    }
+
+    for (int u = 0; u < 8; u++) {
+      try {
+        pkt = queues[queueNum].deq();
+        totalPackets++;
+        handlePacket(pkt);
+      } catch (EmptyException e) {
+        break;
+      }
+    }
+  }
+
+  public boolean firewallConfigPacket(Packet pkt) {
+    final int address = pkt.config.address;
+    final boolean pngStatus = pkt.config.personaNonGrata;
+    final int beginAddr = pkt.config.addressBegin;
+    final int endAddr = pkt.config.addressEnd;
+    final boolean acceptingRange = pkt.config.acceptingRange;
+
+    updatePNG(address, pngStatus);
+
+    if (acceptingRange) {
+      setR(address, beginAddr, endAddr);
+    } else {
+      clearR(address, beginAddr, endAddr);
+    }
+    return false;
+  }
+
+  public boolean firewallDataPacket(Packet pkt) {
+    Header hdr = pkt.header;
+    return (!checkPNG(hdr.source) && checkR(hdr.source, hdr.dest));
+  }
+
+  public boolean firewallPacket(Packet pkt) {
+    switch (pkt.type) {
+      case ConfigPacket: return firewallConfigPacket(pkt);
+      case DataPacket: return firewallDataPacket(pkt);
+    }
+    return false;
+  }
+}
+
+// FAST PACKET WORKER
+class PipelineFastPacketWorker extends FastFirewallWorker {
+
+  public PipelineFastPacketWorker(
+      PaddedPrimitiveNonVolatile<Boolean> done, 
+      LamportQueue<Packet>[] queues,
+      ReentrantLock[] queueLocks,
+      int numWorkers,
+      int queueNum,
+      CompressedFirewallStruct state) {
+    super(done, queues, queueLocks, numWorkers, queueNum, state);
+  }
+
+  public void run() {
+    Packet pkt;
+    boolean foundQueue = false;
+    int randomNum = (int)(Math.random() * numWorkers);
+    while(!done.value) {
+      if (!foundQueue) {
+      randomNum = (int)(Math.random() * numWorkers);
+      foundQueue = true;
+      } else {
+        try {
+          locks[randomNum].lock();
+          pkt = queues[randomNum].deq();
+          processDataPacket(pkt);
+          totalPackets++;
+        } catch (EmptyException e) {
+          foundQueue = false;
+        } finally {
+          locks[randomNum].unlock();
+        }
+      }
+    }
+
+    for (int u = 0; u < 8; u++) {
+      try {
+        pkt = queues[queueNum].deq();
+        totalPackets++;
+        handlePacket(pkt);
+      } catch (EmptyException e) {
+        break;
+      }
+    }
+  }
+
+  public void processDataPacket(Packet pkt) {
+    Header hdr = pkt.header;
+    if (!checkPNG(hdr.source) && checkR(hdr.source, hdr.dest)) {
+      long checksum = Fingerprint.getFingerprint(pkt.body.iterations, pkt.body.seed);
+      final int lockIndex = (int)checksum & lockMask;
+      histogram[(int)checksum].getAndIncrement();
+    }
+  }
+}
