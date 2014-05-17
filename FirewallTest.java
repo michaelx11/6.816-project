@@ -377,13 +377,9 @@ class ParallelFirewall {
       totalConfigPackets += workers[i].numConfigPackets;
     }
     */
-    long averageMapSize = 0;
-    for (int i = 0; i < (1 << numAddressesLog); i++)
-      averageMapSize += state.overflow[i].size();
     System.out.println("count: " + totalCount);
     System.out.println("time: " + timer.getElapsedTime());
     System.out.println(totalCount/timer.getElapsedTime() + " pkts / ms");
-    System.out.println(averageMapSize/ (1.0 * (1 << numAddressesLog)));
     /*
     System.out.println("num data packets: " + totalDataPackets);
     System.out.println("num worker packets: " + totalPacketsWorker);
